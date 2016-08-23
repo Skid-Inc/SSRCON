@@ -142,11 +142,13 @@ int main(int argc, char **argv)
 					else
 					{
 						logger->logf (": Unable to get the server host: %s.\n", strerror(errno));
+						sleep (10);
 					}
 				}
 				else
 				{
 					logger->logf (": Unable to open a socket, or find the server: %s.\n", strerror(errno));
+					sleep (10);
 				}
 			}
 			break;
@@ -156,7 +158,8 @@ int main(int argc, char **argv)
 			{
 				logger->log (": Hacking auth for the time being.\n");
 				sendRCONMessage (user_password.c_str(), 0x12131415, SERVERDATA_AUTH);
-				readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+				readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
+				//readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
 				rcon_task = RCON_RUNNING;
 			}
 			break;
@@ -174,6 +177,12 @@ int main(int argc, char **argv)
 
 				// Get responce
 				readRCONMessage (rcon_id, SERVERDATA_RESPONSE_VALUE);
+
+				// If we sent an exit message to the server close this program as well
+				if (command.compare ("exit") == 0)
+				{
+					closing_process = 1;
+				}
 			}
 			break;
 
