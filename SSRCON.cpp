@@ -101,7 +101,7 @@ int main(int argc, char **argv)
 	std::string user_port;
 	std::getline (std::cin, user_port);
 	rcon_port = strtol (user_port.c_str(), NULL, 10);
-	if (rcon_port < 0)
+	if (rcon_port <= 0)
 	{
 		rcon_port = DEFAULT_RCON_PORT;
 	}
