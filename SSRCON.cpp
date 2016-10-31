@@ -1,10 +1,11 @@
-// g++ -std=c++11 -Wall *.cpp -o SSRCON
+// g++ -std=c++11 -Wall *.cpp -lpthread -o SSRCON
 #include <fcntl.h>
 #include <err.h>
 #include <errno.h>
 #include <signal.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -26,7 +27,14 @@
 // Local function prototypes
 int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type);
 int readRCONMessage (int32_t expected_id, int32_t expected_type);
+void *consoleThread (void *);
 void signalHandler (int signum);
+
+// Thread handling
+pthread_t console_thread;
+pthread_mutex_t console_mutex;
+std::string new_command;
+bool console_running = true;
 
 // Global Varible
 uint8_t debug_level = DEBUG_NONE;
@@ -142,6 +150,9 @@ int main(int argc, char **argv)
 			}
 		}
 	}
+	
+	// Start the console thread
+	pthread_create(&console_thread, NULL, consoleThread, NULL);
 
 	// Loop until the process is closed
 	while (closing_process != 1)
@@ -156,14 +167,34 @@ int main(int argc, char **argv)
 				if (user_address.length() == 0)
 				{
 					printf ("RCON Server Address: ");
-					std::getline (std::cin, user_address);
+					
+					pthread_mutex_lock (&console_mutex);
+					while (new_command.length() == 0)
+					{
+						pthread_mutex_unlock (&console_mutex);
+						usleep (100000);
+						pthread_mutex_lock (&console_mutex);
+					}
+					user_address = new_command;
+					new_command.clear ();
+					pthread_mutex_unlock (&console_mutex);
 				}
 
 				// Get the server port from the user if one wasn't set already
 				if (user_port.length() == 0)
 				{
 					printf ("RCON Server Port: ");
-					std::getline (std::cin, user_port);
+					
+					pthread_mutex_lock (&console_mutex);
+					while (new_command.length() == 0)
+					{
+						pthread_mutex_unlock (&console_mutex);
+						usleep (100000);
+						pthread_mutex_lock (&console_mutex);
+					}
+					user_port = new_command;
+					new_command.clear ();
+					pthread_mutex_unlock (&console_mutex);
 				}
 				
 				// Convert the port to a number
@@ -211,41 +242,85 @@ int main(int argc, char **argv)
 				if (user_password.length() == 0)
 				{
 					printf ("RCON Server Password: ");
-					std::getline (std::cin, user_password);
+					
+					pthread_mutex_lock (&console_mutex);
+					while (new_command.length() == 0)
+					{
+						pthread_mutex_unlock (&console_mutex);
+						usleep (100000);
+						pthread_mutex_lock (&console_mutex);
+					}
+					user_password = new_command;
+					new_command.clear ();
+					pthread_mutex_unlock (&console_mutex);
 				}
 				
 				// Send password to the server and wait for response and auth messages
-				sendRCONMessage (user_password.c_str(), 0x12131415, SERVERDATA_AUTH);
-				if (readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE) == 0)
+				if (sendRCONMessage (user_password.c_str(), 0x12131415, SERVERDATA_AUTH) == 0)
 				{
-					int return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
-					if (return_value == 0)
+					// Wait for response value
+					uint32_t rcon_timeout = 0;
+					int return_value = readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
+					while ((return_value == 0) && (rcon_timeout < 100))
 					{
-						rcon_task = RCON_RUNNING;
+						rcon_timeout++;
+						return_value = readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
+						usleep (100000);
 					}
-					else if (return_value == -3)
+
+					// Check if we timed out
+					if (rcon_timeout >= 100)
 					{
-						// This should trigger if the password was wrong
-						logger->logf (": Error, server reponded with a different ID, your password may be wrong.\n");
+						logger->logf (": Warning, timed out while waiting for SERVERDATA_RESPONSE_VALUE.\n");
 						user_password.clear ();
-						rcon_task = RCON_CLOSE;
+					}
+					// Check the reply was deamed valid
+					else if (return_value > 0)
+					{
+						// Wait for auth response
+						rcon_timeout = 0;
+						return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+						while ((return_value == 0) && (rcon_timeout < 100))
+						{
+							rcon_timeout++;
+							return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+							usleep (100000);
+						}
+
+						// Check if we timed out
+						if (rcon_timeout >= 100)
+						{
+							logger->logf (": Warning, timed out while waiting for SERVERDATA_AUTH_RESPONSE.\n");
+							user_password.clear ();
+						}
+						// Check the reply was deamed valid
+						else if (return_value > 0)
+						{
+							rcon_task = RCON_RUNNING;
+						}
+						else if (return_value == -3)
+						{
+							// This should trigger if the password was wrong
+							logger->logf (": Error, server reponded with a different ID, your password may be wrong.\n");
+							user_password.clear ();
+						}
+						else
+						{
+							logger->logf (": Error, server did not respond with a valid SERVERDATA_AUTH_RESPONSE, disconnecting.\n");
+							user_address.clear ();
+							user_port.clear ();
+							user_password.clear ();
+							rcon_task = RCON_CLOSE;
+						}
 					}
 					else
 					{
-						logger->logf (": Error, server did not respond with a valid SERVERDATA_AUTH_RESPONSE, disconnecting.\n");
+						logger->logf (": Error, server did not respond to SERVERDATA_AUTH command with a valid SERVERDATA_RESPONSE_VALUE first, disconnecting.\n");
 						user_address.clear ();
 						user_port.clear ();
 						user_password.clear ();
 						rcon_task = RCON_CLOSE;
 					}
-				}
-				else
-				{
-					logger->logf (": Error, server did not respond to SERVERDATA_AUTH command with a valid SERVERDATA_RESPONSE_VALUE first, disconnecting.\n");
-					user_address.clear ();
-					user_port.clear ();
-					user_password.clear ();
-					rcon_task = RCON_CLOSE;
 				}
 			}
 			break;
@@ -253,13 +328,16 @@ int main(int argc, char **argv)
 			// Connected and authorised, wait for command from user
 			case (RCON_RUNNING):
 			{
-				std::string command;
-				std::getline (std::cin, command);
-
 				// Send command to RCON
-				rcon_id++;
-				logger->logf (": Sending: %s\n", command.c_str());
-				sendRCONMessage (command, rcon_id, SERVERDATA_EXECCOMMAND);
+				pthread_mutex_lock (&console_mutex);
+				if (new_command.length() > 0)
+				{
+					rcon_id++;
+					logger->logf (": Sending: %s\n", new_command.c_str());
+					sendRCONMessage (new_command, rcon_id, SERVERDATA_EXECCOMMAND);
+					new_command.clear ();
+				}
+				pthread_mutex_unlock (&console_mutex);
 
 				// Get responce
 				readRCONMessage (rcon_id, SERVERDATA_RESPONSE_VALUE);
@@ -273,7 +351,7 @@ int main(int argc, char **argv)
 				rcon_sock = -1;
 
 				rcon_task = RCON_CONNECT;
-				sleep (10);
+				sleep (2);
 			}
 			break;
 		}
@@ -314,6 +392,10 @@ int main(int argc, char **argv)
 		close (rcon_sock);
 		rcon_sock = -1;
 	}
+	
+	pthread_mutex_lock (&console_mutex);
+	console_running = false;
+	pthread_mutex_unlock (&console_mutex);
 
 	logger->log (": Exited.\n");
 	delete logger;
@@ -384,101 +466,141 @@ int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 // Reads from the socket and checks the returned values
 int readRCONMessage (int32_t expected_id, int32_t expected_type)
 {
-	// Creating receive buffers
-	char rcon_size[4];
-	memset (rcon_size, 0, 4);
-	char rcon_recv[MAXDATAREAD];
-	memset (rcon_recv, 0, MAXDATAREAD);
-
-	// Read the message size
-	logger->debug (DEBUG_STANDARD, ": About to read size.\n");
-	// TODO: make this code none blocking, with a max wait time of 10 seconds
-	rcon_return = read(rcon_sock, rcon_size, 4);
-	if (rcon_return > 0)
+	int return_value;
+	uint32_t available;
+	
+	// Check if there is a message waiting
+	return_value = ioctl (rcon_sock, FIONREAD, &available);
+	if (available >= 4)
 	{
-		int32_t data_size = 0;
-		memcpy (&data_size, rcon_size, sizeof (int32_t));
+		// Creating receive buffers
+		char rcon_size[4];
+		memset (rcon_size, 0, 4);
+		char rcon_recv[MAXDATAREAD];
+		memset (rcon_recv, 0, MAXDATAREAD);
 
-		// Read the rest of the message
-		logger->debugf (DEBUG_STANDARD, ": Size %d.\n", data_size);
-		rcon_return = read(rcon_sock, rcon_recv, data_size);
+		// Read the message size
+		logger->debug (DEBUG_STANDARD, ": About to read size.\n");
+		// TODO: make this code none blocking, with a max wait time of 10 seconds
+		rcon_return = read(rcon_sock, rcon_size, 4);
 		if (rcon_return > 0)
 		{
-			logger->debug (DEBUG_STANDARD, ": Reading message.\n");
+			int32_t data_size = 0;
+			memcpy (&data_size, rcon_size, sizeof (int32_t));
 
-			// Pull the message id
-			int32_t msg_id = 0;
-			memcpy (&msg_id, rcon_recv, sizeof (int32_t));
-
-			// Read the message type
-			int32_t msg_type = 0;
-			memcpy (&msg_type, &rcon_recv[4], sizeof (int32_t));
-
-			// Read the message body
-			std::string msg_body (&rcon_recv[8], data_size - 9);
-
-			// Check message is correct
-			if (expected_id == msg_id)
+			// Read the rest of the message
+			logger->debugf (DEBUG_STANDARD, ": Size %d.\n", data_size);
+			rcon_return = read(rcon_sock, rcon_recv, data_size);
+			if (rcon_return > 0)
 			{
-				logger->debug (DEBUG_MINIMAL, ": ID OK.\n");
+				logger->debug (DEBUG_STANDARD, ": Reading message.\n");
+
+				// Pull the message id
+				int32_t msg_id = 0;
+				memcpy (&msg_id, rcon_recv, sizeof (int32_t));
+
+				// Read the message type
+				int32_t msg_type = 0;
+				memcpy (&msg_type, &rcon_recv[4], sizeof (int32_t));
+
+				// Read the message body
+				std::string msg_body (&rcon_recv[8], data_size - 9);
+
+				// Check message is correct
+				if (expected_id == msg_id)
+				{
+					logger->debug (DEBUG_MINIMAL, ": ID OK.\n");
+				}
+				else
+				{
+					logger->log (": Reply ID did not match original message.\n");
+					return -4;
+				}
+				if (expected_type == msg_type)
+				{
+					logger->debug (DEBUG_MINIMAL, ": Type OK.\n");
+				}
+				else
+				{
+					logger->log (": Reply message type did not match expected type.\n");
+					return -5;
+				}
+				if ((rcon_recv[data_size-2] == 0x00) && (rcon_recv[data_size-1] == 0x00))
+				{
+					logger->debug (DEBUG_MINIMAL, ": Empty String OK.\n");
+				}
+				else
+				{
+					logger->log (": Reply is missing ether the null terminator on the string, or the empty string at the end of the message.\n");
+					return -6;
+				}
+
+				logger->logf (": Received: %s\n", msg_body.c_str());
+
+				// Spit out the message
+				logger->debug (DEBUG_DETAILED, ": Received: ");
+				if (debug_level >= DEBUG_DETAILED)
+				{
+					for (uint32_t t = 0; t < 4; t++)
+					{
+						logger->logx (rcon_size[t], false);
+					}
+					for (int32_t t = 0; t < data_size-1; t++)
+					{
+						logger->logx (rcon_recv[t], false);
+					}
+					logger->logx (rcon_recv[data_size-1], true);
+				}
+		
+				return data_size;
 			}
-			else
+			else if ((rcon_return != -EAGAIN) && (rcon_return != -EWOULDBLOCK) && (rcon_return != -1) && (rcon_return != 0))
 			{
-				logger->log (": Reply ID did not match original message.\n");
+				// Failed to read the message
+				logger->logf (": Error on RCON socket while reading message data: %s.\n", strerror(errno));
+				rcon_task = RCON_CLOSE;
 				return -3;
-			}
-			if (expected_type == msg_type)
-			{
-				logger->debug (DEBUG_MINIMAL, ": Type OK.\n");
-			}
-			else
-			{
-				logger->log (": Reply message type did not match expected type.\n");
-				return -4;
-			}
-			if ((rcon_recv[data_size-2] == 0x00) && (rcon_recv[data_size-1] == 0x00))
-			{
-				logger->debug (DEBUG_MINIMAL, ": Empty String OK.\n");
-			}
-			else
-			{
-				logger->log (": Reply is missing ether the null terminator on the string, or the empty string at the end of the message.\n");
-				return -5;
-			}
-
-			logger->logf (": Received: %s\n", msg_body.c_str());
-
-			// Spit out the message
-			logger->debug (DEBUG_DETAILED, ": Received: ");
-			if (debug_level >= DEBUG_DETAILED)
-			{
-				for (uint32_t t = 0; t < 4; t++)
-				{
-					logger->logx (rcon_size[t], false);
-				}
-				for (int32_t t = 0; t < data_size-1; t++)
-				{
-					logger->logx (rcon_recv[t], false);
-				}
-				logger->logx (rcon_recv[data_size-1], true);
 			}
 		}
 		else if ((rcon_return != -EAGAIN) && (rcon_return != -EWOULDBLOCK) && (rcon_return != -1) && (rcon_return != 0))
 		{
 			// Failed to read the message
-			logger->logf (": Error on RCON socket while reading message data: %s.\n", strerror(errno));
+			logger->logf (": Error on RCON socket while reading message size: %s.\n", strerror(errno));
 			rcon_task = RCON_CLOSE;
 			return -2;
 		}
 	}
-	else if ((rcon_return != -EAGAIN) && (rcon_return != -EWOULDBLOCK) && (rcon_return != -1) && (rcon_return != 0))
+	else if (return_value < 0)
 	{
-		// Failed to read the message
-		logger->logf (": Error on RCON socket while reading message size: %s.\n", strerror(errno));
-		rcon_task = RCON_CLOSE;
+		// Failed to read available bytes from the socket
+		logger->logf (": Error, failed to read available bytes from socket, closing socket: %s.\n", strerror(errno));
 		return -1;
 	}
+	
+	return 0;
+}
 
+// Thread handles the console inputs
+void *consoleThread (void *)
+{
+	pthread_mutex_lock (&console_mutex);
+	while (console_running)
+	{
+		pthread_mutex_unlock (&console_mutex);
+		
+		// Read the line and copy it into the new_command variable
+		std::string temp;
+		std::getline (std::cin, temp);
+		pthread_mutex_lock (&console_mutex);
+		new_command.clear();
+		new_command = temp;
+		pthread_mutex_unlock (&console_mutex);
+		
+		usleep (100000);
+		pthread_mutex_lock (&console_mutex);
+	}
+	pthread_mutex_unlock (&console_mutex);
+	
 	return 0;
 }
 
@@ -499,17 +621,6 @@ void signalHandler (int signum)
 			{
 				close_reason = signum;
 				closing_process = 1;
-
-				// Close the socket
-				if (rcon_sock != -1)
-				{
-					close (rcon_sock);
-					rcon_sock = -1;
-				}
-
-				logger->log (": Exited.\n");
-				delete logger;
-				exit (0);
 			}
 		}
 		break;
