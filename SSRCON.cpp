@@ -216,7 +216,7 @@ int main(int argc, char **argv)
 				
 				// Send password to the server and wait for response and auth messages
 				sendRCONMessage (user_password.c_str(), 0x12131415, SERVERDATA_AUTH);
-				if (readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE) == 0)
+				/*if (readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE) == 0)
 				{
 					int return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
 					if (return_value == 0)
@@ -246,7 +246,11 @@ int main(int argc, char **argv)
 					user_port.clear ();
 					user_password.clear ();
 					rcon_task = RCON_CLOSE;
-				}
+				}*/
+				// Override for broken auth reply
+				readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+				readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
+				rcon_task = RCON_RUNNING;
 			}
 			break;
 
@@ -328,7 +332,7 @@ int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 
 	// Prepares the message
 	uint8_t *msg;
-	uint32_t msg_size = msg_body.size() + 14;
+	uint32_t msg_size = msg_body.size() + 13;
 	int32_t msg_body_size = msg_size - 4;
 	msg = (uint8_t*) malloc (msg_size * sizeof (uint8_t));
 	memset (msg, 0, msg_size * sizeof (uint8_t));
@@ -346,7 +350,7 @@ int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 	memcpy (&msg[12], msg_body.c_str(), msg_body.size() * sizeof (uint8_t));
 	
 	// Null terminate the body (byte should already be null but sanity)
-	msg[msg_size-2] = 0x00;
+	//msg[msg_size-2] = 0x00;
 
 	// Adds the message body (byte should already be null but sanity)
 	msg[msg_size-1] = 0x00;
