@@ -1,5 +1,5 @@
 # SSRCON
-Stupid Simple RCON, a basic C++ terminal program to talk to an RCON server. This version has had the protocal "tweaked" to make it complient with what FortressCraft Evolved expects, note, the FCE server will not respond if the password is wrong, so the program will appear to hang currently.
+Stupid Simple RCON, a basic C++ terminal program to talk to an RCON server. This version has had the protocal tweaked to make it complient with what FortressCraft Evolved expects, note, the FCE server will not respond if the password is wrong, so the program will appear to hang currently.
 
 Arguments:
 
