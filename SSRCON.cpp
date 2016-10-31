@@ -260,18 +260,18 @@ int main(int argc, char **argv)
 				{
 					// Wait for response value
 					uint32_t rcon_timeout = 0;
-					int return_value = readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
+					int return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
 					while ((return_value == 0) && (rcon_timeout < 100))
 					{
 						rcon_timeout++;
-						return_value = readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
+						return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
 						usleep (100000);
 					}
 
 					// Check if we timed out
 					if (rcon_timeout >= 100)
 					{
-						logger->logf (": Warning, timed out while waiting for SERVERDATA_RESPONSE_VALUE.\n");
+						logger->logf (": Warning, timed out while waiting for SERVERDATA_AUTH_RESPONSE.\n");
 						user_password.clear ();
 					}
 					// Check the reply was deamed valid
@@ -279,11 +279,11 @@ int main(int argc, char **argv)
 					{
 						// Wait for auth response
 						rcon_timeout = 0;
-						return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+						return_value = readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
 						while ((return_value == 0) && (rcon_timeout < 100))
 						{
 							rcon_timeout++;
-							return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+							return_value = readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
 							usleep (100000);
 						}
 
