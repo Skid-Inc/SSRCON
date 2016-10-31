@@ -271,7 +271,7 @@ int main(int argc, char **argv)
 					// Check if we timed out
 					if (rcon_timeout >= 100)
 					{
-						logger->logf (": Warning, timed out while waiting for SERVERDATA_AUTH_RESPONSE.\n");
+						logger->logf (": Warning, timed out while waiting for SERVERDATA_AUTH_RESPONSE (this has been inverted for FCE).\n");
 						user_password.clear ();
 					}
 					// Check the reply was deamed valid
@@ -290,7 +290,7 @@ int main(int argc, char **argv)
 						// Check if we timed out
 						if (rcon_timeout >= 100)
 						{
-							logger->logf (": Warning, timed out while waiting for SERVERDATA_AUTH_RESPONSE.\n");
+							logger->logf (": Warning, timed out while waiting for SERVERDATA_RESPONSE_VALUE (this has been inverted for FCE).\n");
 							user_password.clear ();
 						}
 						// Check the reply was deamed valid
@@ -410,7 +410,7 @@ int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 
 	// Prepares the message
 	uint8_t *msg;
-	uint32_t msg_size = msg_body.size() + 14;
+	uint32_t msg_size = msg_body.size() + 13;
 	int32_t msg_body_size = msg_size - 4;
 	msg = (uint8_t*) malloc (msg_size * sizeof (uint8_t));
 	memset (msg, 0, msg_size * sizeof (uint8_t));
@@ -428,7 +428,7 @@ int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 	memcpy (&msg[12], msg_body.c_str(), msg_body.size() * sizeof (uint8_t));
 	
 	// Null terminate the body (byte should already be null but sanity)
-	msg[msg_size-2] = 0x00;
+	//msg[msg_size-2] = 0x00;
 
 	// Adds the message body (byte should already be null but sanity)
 	msg[msg_size-1] = 0x00;
