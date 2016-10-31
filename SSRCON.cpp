@@ -24,8 +24,8 @@
 #define VERSION "1.00"
 
 // Local function prototypes
-bool sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type);
-bool readRCONMessage (int32_t expected_id, int32_t expected_type);
+int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type);
+int readRCONMessage (int32_t expected_id, int32_t expected_type);
 void signalHandler (int signum);
 
 // Global Varible
@@ -34,7 +34,7 @@ Logger *logger;
 volatile sig_atomic_t closing_process = 0;
 volatile sig_atomic_t close_reason = 0;
 
-// Used for normal twitch IRC
+// Used for RCON connection
 uint8_t rcon_task = 0;
 int rcon_return;
 int rcon_sock = -1;
@@ -42,6 +42,11 @@ int rcon_port = DEFAULT_RCON_PORT;
 struct sockaddr_in rcon_serv_addr;
 hostent *rcon_server;
 int32_t rcon_id = 0;
+
+// Used to hold server, port and password data
+std::string user_address;
+std::string user_port;
+std::string user_password;
 
 int main(int argc, char **argv)
 {
@@ -67,6 +72,7 @@ int main(int argc, char **argv)
 	int arg_count = 1;
 	for (arg_count = 1; arg_count < argc; arg_count++)
 	{
+		// Process debug argument
 		if (strcmp(argv[arg_count], "-d") == 0)
 		{
 			// Check to make a debug number was set
@@ -83,33 +89,59 @@ int main(int argc, char **argv)
 					logger->log (": Unknown debug mode, I'm confused.\n");
 				}
 				logger->setDebugLevel (debug_level);
+				arg_count++;
 			}
 			else
 			{
 				logger->log (": Why did you set the debug flag without the debug value?.\n");
 			}
 		}
+		// Process server argument
+		if (strcmp(argv[arg_count], "-s") == 0)
+		{
+			// Check to make a debug number was set
+			if (argc - 1 >= arg_count + 1)
+			{
+				user_address = argv[arg_count+1];
+				logger->logf (": Starting with server argument %s.\n", user_address.c_str());
+				arg_count++;
+			}
+			else
+			{
+				logger->log (": Why did you set the server flag without the server value?.\n");
+			}
+		}
+		// Process port argument
+		if (strcmp(argv[arg_count], "-p") == 0)
+		{
+			// Check to make a debug number was set
+			if (argc - 1 >= arg_count + 1)
+			{
+				user_port = argv[arg_count+1];
+				logger->logf (": Starting with port argument %s.\n", user_port.c_str());
+				arg_count++;
+			}
+			else
+			{
+				logger->log (": Why did you set the port flag without the port value?.\n");
+			}
+		}
+		// Process user password argument
+		if (strcmp(argv[arg_count], "-u") == 0)
+		{
+			// Check to make a debug number was set
+			if (argc - 1 >= arg_count + 1)
+			{
+				user_password = argv[arg_count+1];
+				logger->logf (": Starting with a pre-defined user password.\n");
+				arg_count++;
+			}
+			else
+			{
+				logger->log (": Why did you set the user password flag without the user password value?.\n");
+			}
+		}
 	}
-
-	// Get the server address from the user
-	printf ("RCON Server Address: ");
-	std::string user_address;
-	std::getline (std::cin, user_address);
-
-	// Get the server port from the user
-	printf ("RCON Server Port: ");
-	std::string user_port;
-	std::getline (std::cin, user_port);
-	rcon_port = strtol (user_port.c_str(), NULL, 10);
-	if (rcon_port <= 0)
-	{
-		rcon_port = DEFAULT_RCON_PORT;
-	}
-
-	// Get the server password from the user
-	printf ("RCON Server Password: ");
-	std::string user_password;
-	std::getline (std::cin, user_password);
 
 	// Loop until the process is closed
 	while (closing_process != 1)
@@ -120,6 +152,27 @@ int main(int argc, char **argv)
 			// Connect to the given server and port
 			case (RCON_CONNECT):
 			{
+				// Get the server address from the user if one wasn't set already
+				if (user_address.length() == 0)
+				{
+					printf ("RCON Server Address: ");
+					std::getline (std::cin, user_address);
+				}
+
+				// Get the server port from the user if one wasn't set already
+				if (user_port.length() == 0)
+				{
+					printf ("RCON Server Port: ");
+					std::getline (std::cin, user_port);
+				}
+				
+				// Convert the port to a number
+				rcon_port = strtol (user_port.c_str(), NULL, 10);
+				if (rcon_port < 0)
+				{
+					rcon_port = DEFAULT_RCON_PORT;
+				}
+
 				// Create socket
 				rcon_sock = socket(AF_INET, SOCK_STREAM, 0);
 				rcon_server = gethostbyname(user_address.c_str());
@@ -142,13 +195,11 @@ int main(int argc, char **argv)
 					else
 					{
 						logger->logf (": Unable to get the server host: %s.\n", strerror(errno));
-						sleep (10);
 					}
 				}
 				else
 				{
 					logger->logf (": Unable to open a socket, or find the server: %s.\n", strerror(errno));
-					sleep (10);
 				}
 			}
 			break;
@@ -156,11 +207,46 @@ int main(int argc, char **argv)
 			// Authorise with the server (temporally fudged)
 			case (RCON_AUTH):
 			{
-				logger->log (": Hacking auth for the time being.\n");
+				// Get the server password from the user if it's blank
+				if (user_password.length() == 0)
+				{
+					printf ("RCON Server Password: ");
+					std::getline (std::cin, user_password);
+				}
+				
+				// Send password to the server and wait for response and auth messages
 				sendRCONMessage (user_password.c_str(), 0x12131415, SERVERDATA_AUTH);
-				readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE);
-				//readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
-				rcon_task = RCON_RUNNING;
+				if (readRCONMessage (0x12131415, SERVERDATA_RESPONSE_VALUE) == 0)
+				{
+					int return_value = readRCONMessage (0x12131415, SERVERDATA_AUTH_RESPONSE);
+					if (return_value == 0)
+					{
+						rcon_task = RCON_RUNNING;
+					}
+					else if (return_value == -3)
+					{
+						// This should trigger if the password was wrong
+						logger->logf (": Error, server reponded with a different ID, your password may be wrong.\n");
+						user_password.clear ();
+						rcon_task = RCON_CLOSE;
+					}
+					else
+					{
+						logger->logf (": Error, server did not respond with a valid SERVERDATA_AUTH_RESPONSE, disconnecting.\n");
+						user_address.clear ();
+						user_port.clear ();
+						user_password.clear ();
+						rcon_task = RCON_CLOSE;
+					}
+				}
+				else
+				{
+					logger->logf (": Error, server did not respond to SERVERDATA_AUTH command with a valid SERVERDATA_RESPONSE_VALUE first, disconnecting.\n");
+					user_address.clear ();
+					user_port.clear ();
+					user_password.clear ();
+					rcon_task = RCON_CLOSE;
+				}
 			}
 			break;
 
@@ -177,12 +263,6 @@ int main(int argc, char **argv)
 
 				// Get responce
 				readRCONMessage (rcon_id, SERVERDATA_RESPONSE_VALUE);
-
-				// If we sent an exit message to the server close this program as well
-				if (command.compare ("exit") == 0)
-				{
-					closing_process = 1;
-				}
 			}
 			break;
 
@@ -242,7 +322,7 @@ int main(int argc, char **argv)
 }
 
 // Send an RCON Message
-bool sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
+int sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 {
 	int return_value;
 
@@ -264,8 +344,11 @@ bool sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 
 	// Adds the message body
 	memcpy (&msg[12], msg_body.c_str(), msg_body.size() * sizeof (uint8_t));
+	
+	// Null terminate the body (byte should already be null but sanity)
+	msg[msg_size-2] = 0x00;
 
-	// Adds the message body
+	// Adds the message body (byte should already be null but sanity)
 	msg[msg_size-1] = 0x00;
 
 	// Spit out the message
@@ -283,9 +366,9 @@ bool sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 	return_value = write (rcon_sock, msg, msg_size);
 	if (return_value < 0)
 	{
-		logger->logf (": Unable to send the following message to the IRC server: %s, reason: %s.\n", msg_body.c_str(), strerror(errno));
+		logger->logf (": Unable to send the following message to the RCON server: %s, reason: %s.\n", msg_body.c_str(), strerror(errno));
 		rcon_task = RCON_CLOSE;
-		return false;
+		return return_value;
 	}
 	else
 	{
@@ -295,11 +378,11 @@ bool sendRCONMessage (std::string msg_body, int32_t msg_id, int32_t msg_type)
 
 	free (msg);
 	msg = NULL;
-	return true;
+	return 0;
 }
 
 // Reads from the socket and checks the returned values
-bool readRCONMessage (int32_t expected_id, int32_t expected_type)
+int readRCONMessage (int32_t expected_id, int32_t expected_type)
 {
 	// Creating receive buffers
 	char rcon_size[4];
@@ -309,6 +392,7 @@ bool readRCONMessage (int32_t expected_id, int32_t expected_type)
 
 	// Read the message size
 	logger->debug (DEBUG_STANDARD, ": About to read size.\n");
+	// TODO: make this code none blocking, with a max wait time of 10 seconds
 	rcon_return = read(rcon_sock, rcon_size, 4);
 	if (rcon_return > 0)
 	{
@@ -341,6 +425,7 @@ bool readRCONMessage (int32_t expected_id, int32_t expected_type)
 			else
 			{
 				logger->log (": Reply ID did not match original message.\n");
+				return -3;
 			}
 			if (expected_type == msg_type)
 			{
@@ -349,6 +434,7 @@ bool readRCONMessage (int32_t expected_id, int32_t expected_type)
 			else
 			{
 				logger->log (": Reply message type did not match expected type.\n");
+				return -4;
 			}
 			if ((rcon_recv[data_size-2] == 0x00) && (rcon_recv[data_size-1] == 0x00))
 			{
@@ -357,6 +443,7 @@ bool readRCONMessage (int32_t expected_id, int32_t expected_type)
 			else
 			{
 				logger->log (": Reply is missing ether the null terminator on the string, or the empty string at the end of the message.\n");
+				return -5;
 			}
 
 			logger->logf (": Received: %s\n", msg_body.c_str());
@@ -381,7 +468,7 @@ bool readRCONMessage (int32_t expected_id, int32_t expected_type)
 			// Failed to read the message
 			logger->logf (": Error on RCON socket while reading message data: %s.\n", strerror(errno));
 			rcon_task = RCON_CLOSE;
-			return false;
+			return -2;
 		}
 	}
 	else if ((rcon_return != -EAGAIN) && (rcon_return != -EWOULDBLOCK) && (rcon_return != -1) && (rcon_return != 0))
@@ -389,10 +476,10 @@ bool readRCONMessage (int32_t expected_id, int32_t expected_type)
 		// Failed to read the message
 		logger->logf (": Error on RCON socket while reading message size: %s.\n", strerror(errno));
 		rcon_task = RCON_CLOSE;
-		return false;
+		return -1;
 	}
 
-	return true;
+	return 0;
 }
 
 // Hangles the SIGTERM signal, to safely close the program down
@@ -412,6 +499,17 @@ void signalHandler (int signum)
 			{
 				close_reason = signum;
 				closing_process = 1;
+
+				// Close the socket
+				if (rcon_sock != -1)
+				{
+					close (rcon_sock);
+					rcon_sock = -1;
+				}
+
+				logger->log (": Exited.\n");
+				delete logger;
+				exit (0);
 			}
 		}
 		break;
