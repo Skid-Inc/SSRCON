@@ -1,2 +1,2 @@
 #!/bin/sh
-g++ -std=c++11 -Wall *.cpp -o SSRCON
+g++ -std=c++11 -Wall *.cpp -lpthread -o SSRCON
